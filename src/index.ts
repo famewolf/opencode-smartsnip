@@ -17,7 +17,11 @@ const SmartSnipPlugin: Plugin = async ({ $, client, directory }) => {
   if (!config.enabled) return {}
 
   try {
-    await $`command -v ${config.snipPath}`.quiet()
+    // NOTE (famewolf/opencode-smartsnip#2): opencode's $ is Bun.$, which does
+    // not implement the `command` builtin, so `command -v` always exits 1
+    // and the plugin silently self-disables. `which` resolves via
+    // /usr/bin/which and works under Bun.$.
+    await $`which ${config.snipPath}`.quiet()
   } catch {
     console.warn(
       `[smartsnip] '${config.snipPath}' not found in PATH — plugin disabled. ` +
