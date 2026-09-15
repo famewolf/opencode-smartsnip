@@ -1,4 +1,6 @@
 import type { Plugin, PluginModule } from "@opencode-ai/plugin"
+import { exec as execCb } from "node:child_process"
+import { promisify } from "node:util"
 import { loadConfig } from "./config"
 import { buildMatchTable } from "./filters"
 import { rewrite } from "./router"
@@ -9,22 +11,34 @@ import { formatTokens, nowUtcSnipFormat, savingsSince } from "./stats"
 // every runtime export and treats each one as a plugin. Keep this entry to a
 // single default export; import library helpers from their own modules.
 
-const SmartSnipPlugin: Plugin = async ({ $, client, directory }) => {
+const execAsync = promisify(execCb)
+
+// Single-quote for /bin/sh so the path reaches test/which as one word.
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+const SmartSnipPlugin: Plugin = async ({ client, directory }) => {
   // POSIX parser — PowerShell/native Windows is a non-goal for now
   if (process.platform === "win32") return {}
 
   const config = loadConfig(directory)
   if (!config.enabled) return {}
 
+  // NOTE (famewolf/opencode-smartsnip#2 + desktop runtime): opencode's $ is
+  // Bun.$ — it lacks the `command` builtin (so `command -v` always exited 1
+  // under the CLI) and is undefined entirely in the Electron/Node desktop
+  // runtime. Probe via node:child_process instead: same behavior on both.
+  // Absolute paths get `test -x` (the desktop sidecar may not inherit the
+  // shell PATH); bare names fall back to `which`.
+  const probe = config.snipPath.includes("/")
+    ? `test -x ${shellQuote(config.snipPath)}`
+    : `which ${shellQuote(config.snipPath)}`
   try {
-    // NOTE (famewolf/opencode-smartsnip#2): opencode's $ is Bun.$, which does
-    // not implement the `command` builtin, so `command -v` always exits 1
-    // and the plugin silently self-disables. `which` resolves via
-    // /usr/bin/which and works under Bun.$.
-    await $`which ${config.snipPath}`.quiet()
+    await execAsync(probe)
   } catch {
     console.warn(
-      `[smartsnip] '${config.snipPath}' not found in PATH — plugin disabled. ` +
+      `[smartsnip] '${config.snipPath}' not found — plugin disabled. ` +
         "Install: brew install edouard-claude/tap/snip",
     )
     return {}
